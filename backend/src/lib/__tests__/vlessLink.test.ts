@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildVlessLink } from "../xuiClient";
+import { buildVlessLink } from "../xui";
 
 describe("buildVlessLink", () => {
   it("should generate a valid VLESS link with all required parameters", () => {
