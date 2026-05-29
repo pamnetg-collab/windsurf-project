@@ -1,0 +1,195 @@
+// VPN/Proxy SaaS — PostgreSQL schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  trial
+  active
+  expired
+  banned
+}
+
+enum SubscriptionStatus {
+  active
+  expired
+  cancelled
+}
+
+enum SubscriptionPlan {
+  trial
+  m1
+  m3
+}
+
+enum ServerStatus {
+  active
+  warm
+  full
+  offline
+}
+
+enum ReferralStatus {
+  pending
+  rewarded
+  rejected
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+model User {
+  id           String     @id @default(uuid())
+  telegramId   BigInt     @unique @map("telegram_id")
+  username     String?
+  firstName    String?    @map("first_name")
+  status       UserStatus @default(trial)
+  referralCode String     @unique @map("referral_code")
+  referredBy   String?    @map("referred_by")
+  trialUsed    Boolean    @default(false) @map("trial_used")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  referrer          User?          @relation("UserReferrals", fields: [referredBy], references: [id])
+  referredUsers     User[]         @relation("UserReferrals")
+  subscriptions     Subscription[]
+  devices           Device[]
+  payments          Payment[]
+  accessKeys        AccessKey[]
+  referralsMade     Referral[]     @relation("ReferralOwner")
+  referralsReceived Referral[]     @relation("ReferralInvitee")
+
+  @@map("users")
+}
+
+model Subscription {
+  id        String             @id @default(uuid())
+  userId    String             @map("user_id")
+  startDate DateTime           @default(now()) @map("start_date")
+  endDate   DateTime           @map("end_date")
+  plan      SubscriptionPlan
+  status    SubscriptionStatus @default(active)
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, endDate])
+  @@map("subscriptions")
+}
+
+model Server {
+  id           String       @id @default(uuid())
+  name         String
+  ip           String
+  port         Int          @default(443)
+  region       String
+  capacity     Int          @default(100)
+  currentUsers Int          @default(0) @map("current_users")
+  status       ServerStatus @default(active)
+  // Reachable management API of the node (Xray/Hiddify panel) + auth secret
+  apiUrl       String?      @map("api_url")
+  apiSecret    String?      @map("api_secret")
+  // Base x25519 public key / sni used to build vless links
+  publicKey    String?      @map("public_key")
+  sni          String?
+  // 3x-ui panel integration
+  panelType    String       @default("3x-ui") @map("panel_type")
+  panelUser    String?      @map("panel_user")
+  panelPass    String?      @map("panel_pass")
+  inboundId    Int?         @map("inbound_id")
+  lastHealthAt DateTime?    @map("last_health_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  accessKeys AccessKey[]
+
+  @@index([status])
+  @@map("servers")
+}
+
+model Device {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  deviceHash String   @map("device_hash")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceHash])
+  @@index([userId])
+  @@map("devices")
+}
+
+model Referral {
+  id             String         @id @default(uuid())
+  userId         String         @map("user_id")
+  referredUserId String         @map("referred_user_id")
+  rewardDays     Int            @default(7) @map("reward_days")
+  status         ReferralStatus @default(pending)
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  owner   User @relation("ReferralOwner", fields: [userId], references: [id], onDelete: Cascade)
+  invitee User @relation("ReferralInvitee", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  @@unique([referredUserId])
+  @@index([userId])
+  @@map("referrals")
+}
+
+model Payment {
+  id           String        @id @default(uuid())
+  userId       String        @map("user_id")
+  provider     String        @default("telegram")
+  plan         SubscriptionPlan
+  amount       Int // minor units (cents / stars)
+  currency     String        @default("XTR")
+  status       PaymentStatus @default(pending)
+  payload      String        @unique // invoice payload for idempotency
+  providerRef  String?       @map("provider_ref")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("payments")
+}
+
+model AccessKey {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  serverId  String    @map("server_id")
+  uuid      String    @unique // xray/vless client uuid
+  email     String?   // client identifier inside the 3x-ui inbound
+  subId     String?   @map("sub_id")
+  config    String // full vless:// link or config blob
+  active    Boolean   @default(true)
+  expiryAt  DateTime? @map("expiry_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  server Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([serverId])
+  @@map("access_keys")
+}
+
+model Admin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("admins")
+}
